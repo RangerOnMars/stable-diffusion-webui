@@ -155,6 +155,14 @@ def create_embedding(name, num_vectors_per_token, init_text='*'):
 
     return fn
 
+# a learn_rate of this: "5.0e-3:100, 2.0e-3:200, 1.0e-3:300"
+# will result in training with a learning rate of:
+# 5.0e-3 from steps 0 to 99
+# 2.0e-3 from steps 100 to 199
+# 1.0e-3 from steps 200 to 299
+#
+# However, regardless of the steps specified in learn_rate,
+# the training will stop at the number of steps passed in via steps
 
 def train_embedding(embedding_name, learn_rate, data_root, log_directory, steps, create_image_every, save_embedding_every, template_file):
     assert embedding_name, 'embedding not selected'
@@ -189,68 +197,72 @@ def train_embedding(embedding_name, learn_rate, data_root, log_directory, steps,
     embedding = hijack.embedding_db.word_embeddings[embedding_name]
     embedding.vec.requires_grad = True
 
-    optimizer = torch.optim.AdamW([embedding.vec], lr=learn_rate)
-
     losses = torch.zeros((32,))
 
     last_saved_file = "<none>"
     last_saved_image = "<none>"
 
-    ititial_step = embedding.step or 0
-    if ititial_step > steps:
+    initial_step = embedding.step or 0
+    if initial_step > steps:
         return embedding, filename
 
-    pbar = tqdm.tqdm(enumerate(ds), total=steps-ititial_step)
-    for i, (x, text) in pbar:
-        embedding.step = i + ititial_step
+    schedule = LearnSchedule(learn_rate, steps, initial_step)
+    for (learn_rate, endstep) in schedule:
+        print(f'Training at rate of {learn_rate} until step {endstep}') 
 
-        if embedding.step > steps:
-            break
+        optimizer = torch.optim.AdamW([embedding.vec], lr=learn_rate)
 
-        if shared.state.interrupted:
-            break
+        pbar = tqdm.tqdm(enumerate(ds), total=endstep-initial_step)
+        for i, (x, text) in pbar:
+            embedding.step = i + initial_step
 
-        with torch.autocast("cuda"):
-            c = cond_model([text])
+            if embedding.step >= endstep:
+                break
 
-            x = x.to(devices.device)
-            loss = shared.sd_model(x.unsqueeze(0), c)[0]
-            del x
+            if shared.state.interrupted:
+                break
 
-            losses[embedding.step % losses.shape[0]] = loss.item()
+            with torch.autocast("cuda"):
+                c = cond_model([text])
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                x = x.to(devices.device)
+                loss = shared.sd_model(x.unsqueeze(0), c)[0]
+                del x
 
-        pbar.set_description(f"loss: {losses.mean():.7f}")
+                losses[embedding.step % losses.shape[0]] = loss.item()
 
-        if embedding.step > 0 and embedding_dir is not None and embedding.step % save_embedding_every == 0:
-            last_saved_file = os.path.join(embedding_dir, f'{embedding_name}-{embedding.step}.pt')
-            embedding.save(last_saved_file)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-        if embedding.step > 0 and images_dir is not None and embedding.step % create_image_every == 0:
-            last_saved_image = os.path.join(images_dir, f'{embedding_name}-{embedding.step}.png')
+            pbar.set_description(f"loss: {losses.mean():.7f}")
 
-            p = processing.StableDiffusionProcessingTxt2Img(
-                sd_model=shared.sd_model,
-                prompt=text,
-                steps=20,
-                do_not_save_grid=True,
-                do_not_save_samples=True,
-            )
+            if embedding.step > 0 and embedding_dir is not None and embedding.step % save_embedding_every == 0:
+                last_saved_file = os.path.join(embedding_dir, f'{embedding_name}-{embedding.step}.pt')
+                embedding.save(last_saved_file)
 
-            processed = processing.process_images(p)
-            image = processed.images[0]
+            if embedding.step > 0 and images_dir is not None and embedding.step % create_image_every == 0:
+                last_saved_image = os.path.join(images_dir, f'{embedding_name}-{embedding.step}.png')
 
-            shared.state.current_image = image
-            image.save(last_saved_image)
+                p = processing.StableDiffusionProcessingTxt2Img(
+                    sd_model=shared.sd_model,
+                    prompt=text,
+                    steps=20,
+                    do_not_save_grid=True,
+                    do_not_save_samples=True,
+                )
 
-            last_saved_image += f", prompt: {text}"
+                processed = processing.process_images(p)
+                image = processed.images[0]
 
-        shared.state.job_no = embedding.step
+                shared.state.current_image = image
+                image.save(last_saved_image)
 
-        shared.state.textinfo = f"""
+                last_saved_image += f", prompt: {text}"
+
+            shared.state.job_no = embedding.step
+
+            shared.state.textinfo = f"""
 <p>
 Loss: {losses.mean():.7f}<br/>
 Step: {embedding.step}<br/>
@@ -259,6 +271,7 @@ Last saved embedding: {html.escape(last_saved_file)}<br/>
 Last saved image: {html.escape(last_saved_image)}<br/>
 </p>
 """
+        initial_step = endstep
 
     checkpoint = sd_models.select_checkpoint()
 
@@ -269,3 +282,35 @@ Last saved image: {html.escape(last_saved_image)}<br/>
 
     return embedding, filename
 
+class LearnSchedule:
+    def __init__(self, learn_rate, max_steps, cur_step=0):
+        pairs = learn_rate.split(',')
+        self.rates = []
+        self.it = 0
+        self.maxit = 0
+        for i, pair in enumerate(pairs):
+            tmp = pair.split(':')
+            if len(tmp) == 2:
+                step = int(tmp[1])
+                if step > cur_step:
+                    self.rates.append((float(tmp[0]), min(step, max_steps)))
+                    self.maxit += 1
+                    if step > max_steps:
+                        return
+                elif step == -1:
+                    self.rates.append((float(tmp[0]), max_steps))
+                    self.maxit += 1
+            else:
+                self.rates.append((float(tmp[0]), max_steps))
+                self.maxit += 1
+                return
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.it < self.maxit:
+            self.it += 1
+            return self.rates[self.it - 1]
+        else:
+            raise StopIteration
