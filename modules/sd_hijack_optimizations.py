@@ -7,18 +7,59 @@ from einops import rearrange
 
 from modules import shared
 
+import xformers.ops
+
+def memory_efficient_attention_forward(self, x, context=None, mask=None):
+    h = self.heads
+
+    q_in = self.to_q(x)
+    context = default(context, x)
+
+    hypernetwork = shared.selected_hypernetwork()
+    hypernetwork_layers = (hypernetwork.layers if hypernetwork is not None else {}).get(context.shape[2], None)
+
+    if hypernetwork_layers is not None:
+        k_in = self.to_k(hypernetwork_layers[0](context))
+        v_in = self.to_v(hypernetwork_layers[1](context))
+    else:
+        k_in = self.to_k(context)
+        v_in = self.to_v(context)
+
+    b, _, _ = q_in.shape
+
+    del context, x
+
+    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q_in, k_in, v_in))
+    del q_in, k_in, v_in
+
+    out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None, op=None)
+
+    out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+    return self.to_out(out)
 
 # see https://github.com/basujindal/stable-diffusion/pull/117 for discussion
 def split_cross_attention_forward_v1(self, x, context=None, mask=None):
     h = self.heads
 
-    q = self.to_q(x)
+    q_in = self.to_q(x)
     context = default(context, x)
-    k = self.to_k(context)
-    v = self.to_v(context)
+
+    hypernetwork = shared.selected_hypernetwork()
+    hypernetwork_layers = (hypernetwork.layers if hypernetwork is not None else {}).get(context.shape[2], None)
+
+    if hypernetwork_layers is not None:
+        k_in = self.to_k(hypernetwork_layers[0](context))
+        v_in = self.to_v(hypernetwork_layers[1](context))
+    else:
+        k_in = self.to_k(context)
+        v_in = self.to_v(context)
+
+    k_in *= self.scale
+
     del context, x
 
-    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q, k, v))
+    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q_in, k_in, v_in))
+    del q_in, k_in, v_in
 
     r1 = torch.zeros(q.shape[0], q.shape[1], v.shape[2], device=q.device)
     for i in range(0, q.shape[0], 2):

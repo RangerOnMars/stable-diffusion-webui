@@ -247,7 +247,7 @@ def train_embedding(embedding_name, learn_rate, data_root, log_directory, steps,
                 p = processing.StableDiffusionProcessingTxt2Img(
                     sd_model=shared.sd_model,
                     prompt=text,
-                    steps=20,
+                    steps=50,
                     do_not_save_grid=True,
                     do_not_save_samples=True,
                 )
