@@ -21,6 +21,26 @@ function negmod(n, m) {
   return ((n % m) + m) % m;
 }
 
+function updateOnBackgroundChange() {
+    const modalImage = gradioApp().getElementById("modalImage")
+    if(modalImage && modalImage.offsetParent){
+        let allcurrentButtons = gradioApp().querySelectorAll(".gallery-item.transition-all.\\!ring-2")
+        let currentButton = null
+        allcurrentButtons.forEach(function(elem){
+            if(elem.parentElement.offsetParent){
+                currentButton = elem;
+            }
+        })
+
+        if(modalImage.src != currentButton.children[0].src){
+            modalImage.src = currentButton.children[0].src;
+            if (modalImage.style.display === 'none') {
+                modal.style.setProperty('background-image', `url(${modalImage.src})`)
+            }
+        }
+    }
+}
+
 function modalImageSwitch(offset){
   var allgalleryButtons = gradioApp().querySelectorAll(".gallery-item.transition-all")
   var galleryButtons = []
@@ -142,6 +162,7 @@ onUiUpdate(function(){
         if(fullImg_preview != null){
 	    fullImg_preview.forEach(galleryImageHandler);
     }
+    updateOnBackgroundChange()
 })
 
 document.addEventListener("DOMContentLoaded", function() {
