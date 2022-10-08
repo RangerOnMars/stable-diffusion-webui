@@ -20,7 +20,6 @@ if shared.cmd_opts.xformers:
         print("Cannot import xformers", file=sys.stderr)
         print(traceback.format_exc(), file=sys.stderr)
 
->>>>>>> 4f33289d0fc5aa3a197f4a4c926d03d44f0d597e
 
 # see https://github.com/basujindal/stable-diffusion/pull/117 for discussion
 def split_cross_attention_forward_v1(self, x, context=None, mask=None):
