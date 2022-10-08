@@ -29,12 +29,12 @@ def memory_efficient_attention_forward(self, x, context=None, mask=None):
 
     del context, x
 
-    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), (q_in, k_in, v_in))
+    q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b n h d', h=h), (q_in, k_in, v_in))
     del q_in, k_in, v_in
 
     out = xformers.ops.memory_efficient_attention(q, k, v, attn_bias=None, op=None)
 
-    out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+    out = rearrange(out, 'b n h d -> b n (h d)', h=h)
     return self.to_out(out)
 
 # see https://github.com/basujindal/stable-diffusion/pull/117 for discussion
