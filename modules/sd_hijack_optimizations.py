@@ -9,7 +9,7 @@ from modules import shared
 
 import xformers.ops
 
-def memory_efficient_attention_forward(self, x, context=None, mask=None):
+def xformers_attention_forward(self, x, context=None, mask=None):
     h = self.heads
 
     q_in = self.to_q(x)
@@ -24,9 +24,6 @@ def memory_efficient_attention_forward(self, x, context=None, mask=None):
     else:
         k_in = self.to_k(context)
         v_in = self.to_v(context)
-
-    b, _, _ = q_in.shape
-
     del context, x
 
     q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b n h d', h=h), (q_in, k_in, v_in))
@@ -144,6 +141,19 @@ def split_cross_attention_forward(self, x, context=None, mask=None):
     del r1
 
     return self.to_out(r2)
+
+def xformers_attnblock_forward(self, x):
+    h_ = x
+    h_ = self.norm(h_)
+    q = self.q(h_)
+    k = self.k(h_)
+    v = self.v(h_)
+
+    #compute attention
+    out = xformers.ops.memory_efficient_attention(q, k, v)
+    out = self.proj_out(out)
+
+    return x + out
 
 def cross_attention_attnblock_forward(self, x):
         h_ = x
