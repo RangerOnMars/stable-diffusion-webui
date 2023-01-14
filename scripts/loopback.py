@@ -9,6 +9,7 @@ from modules.processing import Processed
 from modules.sd_samplers import samplers
 from modules.shared import opts, cmd_opts, state
 
+
 class Script(scripts.Script):
     def title(self):
         return "Loopback"
@@ -16,9 +17,9 @@ class Script(scripts.Script):
     def show(self, is_img2img):
         return is_img2img
 
-    def ui(self, is_img2img):
-        loops = gr.Slider(minimum=1, maximum=32, step=1, label='Loops', value=4)
-        denoising_strength_change_factor = gr.Slider(minimum=0.9, maximum=1.1, step=0.01, label='Denoising strength change factor', value=1)
+    def ui(self, is_img2img):        
+        loops = gr.Slider(minimum=1, maximum=32, step=1, label='Loops', value=4, elem_id=self.elem_id("loops"))
+        denoising_strength_change_factor = gr.Slider(minimum=0.9, maximum=1.1, step=0.01, label='Denoising strength change factor', value=1, elem_id=self.elem_id("denoising_strength_change_factor"))
 
         return [loops, denoising_strength_change_factor]
 
@@ -38,12 +39,16 @@ class Script(scripts.Script):
 
         grids = []
         all_images = []
+        original_init_image = p.init_images
         state.job_count = loops * batch_count
 
         initial_color_corrections = [processing.setup_color_correction(p.init_images[0])]
 
         for n in range(batch_count):
             history = []
+
+            # Reset to original init image at the start of each batch
+            p.init_images = original_init_image
 
             for i in range(loops):
                 p.n_iter = 1
